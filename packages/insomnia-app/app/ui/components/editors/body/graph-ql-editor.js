@@ -175,9 +175,9 @@ class GraphQLEditor extends React.PureComponent<Props, State> {
   _handleQueryUserActivity() {
     const newOperationName = this._getCurrentOperation();
 
-    const { query, variables, operationName } = this.state.body;
+    const { query, variables, extensions, operationName } = this.state.body;
     if (newOperationName !== operationName) {
-      this._handleBodyChange(query, variables, newOperationName);
+      this._handleBodyChange(query, variables, newOperationName, extensions);
     }
   }
 
@@ -240,8 +240,8 @@ class GraphQLEditor extends React.PureComponent<Props, State> {
   _handleQueryEditorInit(codeMirror: CodeMirror) {
     this._queryEditor = codeMirror;
     window.cm = this._queryEditor;
-    const { query, variables, operationName } = this.state.body;
-    this._handleBodyChange(query, variables, operationName);
+    const { query, variables, extensions, operationName } = this.state.body;
+    this._handleBodyChange(query, variables, operationName, extensions);
   }
 
   async _fetchAndSetSchema(rawRequest: Request) {
@@ -362,10 +362,16 @@ class GraphQLEditor extends React.PureComponent<Props, State> {
 
   _handlePrettify() {
     const { body } = this.state;
-    const { variables, query } = body;
+    const { variables, extensions, query } = body;
     const prettyQuery = query && print(parse(query));
     const prettyVariables = variables && JSON.parse(prettify.json(JSON.stringify(variables)));
-    this._handleBodyChange(prettyQuery, prettyVariables, this.state.body.operationName);
+    const prettyExtensions = extensions && JSON.parse(prettify.json(JSON.stringify(extensions)));
+    this._handleBodyChange(
+      prettyQuery,
+      prettyVariables,
+      this.state.body.operationName,
+      prettyExtensions,
+    );
 
     // Update editor contents
     if (this._queryEditor) {
@@ -389,7 +395,12 @@ class GraphQLEditor extends React.PureComponent<Props, State> {
     }
   }
 
-  _handleBodyChange(query: string, variables: ?Object, operationName: ?string): void {
+  _handleBodyChange(
+    query: string,
+    variables: ?Object,
+    operationName: ?string,
+    extensions: ?Object,
+  ): void {
     this._setDocumentAST(query);
 
     const body: GraphQLBody = { query };
@@ -402,8 +413,12 @@ class GraphQLEditor extends React.PureComponent<Props, State> {
       body.operationName = operationName;
     }
 
-    // Find op if there isn't one yet
+    if (extensions) {
+      body.extensions = extensions;
+    }
+
     if (!body.operationName) {
+      // Find op if there isn't one yet
       const newOperationName = this._getCurrentOperation();
       if (newOperationName) {
         body.operationName = newOperationName;
@@ -431,7 +446,26 @@ class GraphQLEditor extends React.PureComponent<Props, State> {
   _handleVariablesChange(variables: string): void {
     try {
       const variablesObj = JSON.parse(variables || 'null');
-      this._handleBodyChange(this.state.body.query, variablesObj, this.state.body.operationName);
+      this._handleBodyChange(
+        this.state.body.query,
+        variablesObj,
+        this.state.body.operationName,
+        this.state.body.extensions,
+      );
+    } catch (err) {
+      this.setState({ variablesSyntaxError: err.message });
+    }
+  }
+
+  _handleExtensionsChange(extensions: string): void {
+    try {
+      const extensionsObj = JSON.parse(extensions || 'null');
+      this._handleBodyChange(
+        this.state.body.query,
+        this.state.body.variables,
+        this.state.body.operationName,
+        extensionsObj,
+      );
     } catch (err) {
       this.setState({ variablesSyntaxError: err.message });
     }
@@ -449,14 +483,23 @@ class GraphQLEditor extends React.PureComponent<Props, State> {
       obj.variables = jsonParseOr(obj.variables, '');
     }
 
+    if (typeof obj.extensions === 'string') {
+      obj.extensions = jsonParseOr(obj.extensions, '');
+    }
+
     const query = obj.query || '';
     const variables = obj.variables || null;
+    const extensions = obj.extensions || null;
     const operationName = obj.operationName || null;
 
     const body: GraphQLBody = { query };
 
     if (variables) {
       body.variables = variables;
+    }
+
+    if (extensions) {
+      body.extensions = extensions;
     }
 
     if (operationName) {
@@ -547,9 +590,14 @@ class GraphQLEditor extends React.PureComponent<Props, State> {
       schemaLastFetchTime,
     } = this.state;
 
-    const { query, variables: variablesObject } = GraphQLEditor._stringToGraphQL(content);
+    const {
+      query,
+      variables: variablesObject,
+      extensions: extensionsObject,
+    } = GraphQLEditor._stringToGraphQL(content);
 
     const variables = prettify.json(JSON.stringify(variablesObject));
+    const extensions = prettify.json(JSON.stringify(extensionsObject));
 
     const variableTypes = this._buildVariableTypes(schema);
 
@@ -674,6 +722,36 @@ class GraphQLEditor extends React.PureComponent<Props, State> {
             isVariableUncovered={isVariableUncovered}
             onChange={this._handleVariablesChange}
             mode="graphql-variables"
+            lineWrapping={settings.editorLineWrapping}
+            placeholder=""
+          />
+        </div>
+        <h2 className="no-margin pad-left-sm pad-top-sm pad-bottom-sm">
+          Query Extensions
+          <HelpTooltip className="space-left">
+            This thing probably only SOCi uses <br />
+            (JSON format)
+          </HelpTooltip>
+        </h2>
+        <div className="graphql-editor__extensions">
+          <CodeEditor
+            dynamicHeight
+            uniquenessKey={uniquenessKey ? uniquenessKey + '::variables' : undefined}
+            debounceMillis={DEBOUNCE_MILLIS * 4}
+            manualPrettify={false}
+            fontSize={settings.editorFontSize}
+            indentSize={settings.editorIndentSize}
+            keyMap={settings.editorKeyMap}
+            defaultValue={extensions}
+            className={className}
+            render={render}
+            getRenderContext={getRenderContext}
+            lintOptions={{ variableToType: variableTypes }}
+            noLint={true}
+            nunjucksPowerUserMode={settings.nunjucksPowerUserMode}
+            isVariableUncovered={false}
+            onChange={this._handleExtensionsChange}
+            mode="json"
             lineWrapping={settings.editorLineWrapping}
             placeholder=""
           />
